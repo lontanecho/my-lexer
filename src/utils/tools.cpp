@@ -23,9 +23,6 @@ bool digit(const char C){
 void retract(char*&forword){
     forword--;
 }
-int reserve(const std::string&lexeme,const KeywordTable&keytable){
-    return keytable.find(lexeme);
-}
 int SToI(const std::string &token){
     return std::stoi(token);
 }

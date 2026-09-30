@@ -3,9 +3,10 @@ void get_char(char&C,char*&forward){
     C=*forward;
     forward++;
 }
-void get_nbc(char&C,char*&forward){
+void get_nbc(char&C,char*&forward,size_t &index){
     while(C==' '||C=='\t'||C=='\n'||C=='\r'){
         forward++;
+        index++;
     }
     C=*forward;
     forward++;

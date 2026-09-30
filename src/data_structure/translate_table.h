@@ -1,11 +1,11 @@
 #include<string>
-#include<unordered_map>
+#include<vector>
 #include"data_structure/token.h"
 
 class TranslateTable {
 public:
     TranslateTable()=default;
-    void add(const std::string exp);
+    void add(const TokenType type,const std::string token,const int line,const int column);
 private:
-    std::unordered_map<std::string,TokenType> translate_table;
+    std::vector<Token>table;
 };

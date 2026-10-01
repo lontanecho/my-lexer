@@ -1,3 +1,4 @@
+#pragma once
 #include<string>
 #include"data_structure/keyword_table.h"
 void get_char(char&C,char*&forward);

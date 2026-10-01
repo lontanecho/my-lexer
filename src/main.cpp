@@ -5,26 +5,12 @@
 #include<vector>
 #include"data_structure/keyword_table.h"
 #include"data_structure/translate_table.h"
+#include"data_structure/state.h"
 #include"utils/tools.h"
 #include"utils/position.h"
-
-enum class State {
-    Start,  // 初始状态
-    InId,   // 关键字或标识符
-    InNum,  // 数字
-    InFloat,    // 浮点数
-    InExp,  // 指数
-    InStr,  // 字符串
-    InChar, // 单字符
-    InComment,  // 注释
-    InOp,   // 运算符
-    InPreproc,  // 预处理
-    Done,   // 结束
-    Error   // 错误
-}; 
+#include"state_machine/analysis.h"
 
 char C;
-int iskey;
 size_t index=0;//源文件索引,跳过空格注释,匹配成功时更新
 char* forward;
 std::string token;
@@ -382,7 +368,148 @@ int main(int argc, char*argv[]){
                         state = State::Start;
                     }
                 }
-                
+                else if(C=='='){
+                    get_char(C,forward);
+                    if(C=='='){
+                        cat(C,token);
+                        int line = positions[index].line;
+                        int column = positions[index].column;
+                        transtable.add(TokenType::Eq,token,line,column);
+                        index=index+token.size();
+                        token.clear();
+                    }
+                    else{
+                        int line = positions[index].line;
+                        int column = positions[index].column;
+                        transtable.add(TokenType::Assign,token,line,column);
+                        index=index+token.size();
+                        token.clear();
+                        retract(forward);
+                        state = State::Start;
+                    }
+                }
+                else if(C=='!'){
+                    get_char(C,forward);
+                    if(C=='='){
+                        cat(C,token);
+                        int line = positions[index].line;
+                        int column = positions[index].column;
+                        transtable.add(TokenType::OrAssign,token,line,column);
+                        index=index+token.size();
+                        token.clear();
+                        state = State::Start;
+                    }
+                    else{
+                        int line = positions[index].line;
+                        int column = positions[index].column;
+                        transtable.add(TokenType::Not,token,line,column);
+                        index=index+token.size();
+                        token.clear();
+                        state = State::Start;
+                        retract(forward);
+                    }
+                }
+                else if(C=='&'){
+                    get_char(C,forward);
+                    if(C=='&'){
+                        cat(C,token);
+                        int line = positions[index].line;
+                        int column = positions[index].column;
+                        transtable.add(TokenType::And,token,line,column);
+                        index=index+token.size();
+                        token.clear();
+                        state = State::Start;
+                    }
+                    else if(C=='='){
+                        cat(C,token);
+                        int line = positions[index].line;
+                        int column = positions[index].column;
+                        transtable.add(TokenType::AndAssign,token,line,column);
+                        index=index+token.size();
+                        token.clear();
+                        state = State::Start;
+                    }
+                    else if(C=='*'){
+                        cat(C,token);
+                        int line = positions[index].line;
+                        int column = positions[index].column;
+                        transtable.add(TokenType::AndAssign,token,line,column);
+                        index=index+token.size();
+                        token.clear();
+                        state = State::Start;
+                    }
+                    else{
+                        int line = positions[index].line;
+                        int column = positions[index].column;
+                        transtable.add(TokenType::BitAnd,token,line,column);
+                        index=index+token.size();
+                        token.clear();
+                        state = State::Start;
+                        retract(forward);
+                    }
+                }
+                else if(C=='|'){
+                    get_char(C,forward);
+                    if(C=='|'){
+                        cat(C,token);
+                        int line = positions[index].line;
+                        int column = positions[index].column;
+                        transtable.add(TokenType::Or,token,line,column);
+                        index=index+token.size();
+                        token.clear();
+                        state = State::Start;
+                    }
+                    else if(C=='='){
+                        cat(C,token);
+                        int line = positions[index].line;
+                        int column = positions[index].column;
+                        transtable.add(TokenType::OrAssign,token,line,column);
+                        index=index+token.size();
+                        token.clear();
+                        state = State::Start;
+                    }
+                    else{
+                        int line = positions[index].line;
+                        int column = positions[index].column;
+                        transtable.add(TokenType::BitOr,token,line,column);
+                        index=index+token.size();
+                        token.clear();
+                        state = State::Start;
+                        retract(forward);
+                    }
+                }
+                else if(C=='^'){
+                    get_char(C,forward);
+                    if(C=='='){
+                        cat(C,token);
+                        int line = positions[index].line;
+                        int column = positions[index].column;
+                        transtable.add(TokenType::XorAssign,token,line,column);
+                        index=index+token.size();
+                        token.clear();
+                        state = State::Start;   
+                    }
+                    else{
+                        int line = positions[index].line;
+                        int column = positions[index].column;
+                        transtable.add(TokenType::BitXor,token,line,column);
+                        index=index+token.size();
+                        token.clear();
+                        state = State::Start;
+                        retract(forward);
+                    }
+                }
+                else if(C=='~'){ 
+                    int line = positions[index].line;
+                    int column = positions[index].column;
+                    transtable.add(TokenType::BitNot,token,line,column);
+                    index=index+token.size();
+                    token.clear();
+                    state = State::Start;
+                }
+                else if(C=='?'){ 
+                    
+                }
             default:
                 break;
         }

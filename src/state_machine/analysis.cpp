@@ -1,11 +1,68 @@
 #include"state_machine/analysis.h"
 #include"utils/tools.h"
+#include<unordered_map>
 
+namespace {
 
+void setError(State& state, std::string& token, std::string& errorMessage,
+    const char* message) {
+    token.clear();
+    errorMessage = message;
+    state = State::Error;
+}
+
+bool validSimpleEscape(const char C) {
+    return C=='\\'||C=='\''||C=='"'||C=='a'||C=='b'||C=='f'||
+        C=='n'||C=='r'||C=='t'||C=='v'||C=='?';
+}
+
+bool isDirectiveStart(const std::string& src, const size_t index) {
+    size_t i = index;
+    while (true) {
+        while (i > 0 && (src[i - 1] == ' ' || src[i - 1] == '\t' ||
+            src[i - 1] == '\f' || src[i - 1] == '\v')) {
+            --i;
+        }
+        if (i < 2 || src[i - 2] != '*' || src[i - 1] != '/') {
+            break;
+        }
+        const size_t commentStart = src.rfind("/*", i - 2);
+        if (commentStart == std::string::npos) {
+            break;
+        }
+        i = commentStart;
+    }
+    if (i == 0 || src[i - 1] == '\n' || src[i - 1] == '\r') {
+        // A backslash-newline pair continues the previous logical line.
+        size_t lineEnd = i;
+        if (lineEnd > 0 && src[lineEnd - 1] == '\n') {
+            size_t previous = lineEnd - 1;
+            if (previous > 0 && src[previous - 1] == '\r') {
+                --previous;
+            }
+            while (previous > 0 && (src[previous - 1] == ' ' ||
+                src[previous - 1] == '\t')) {
+                --previous;
+            }
+            if (previous > 0 && src[previous - 1] == '\\') {
+                return false;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+}
+
+// 处理开始
 void HandleStart(State&state,char*&forward,std::string&token,char &C,
-    size_t &index,std::string &src){
+    size_t &index,std::string &src,std::string& errorMessage){
     get_nbc(C,forward,index); //跳过空格、\t、\r、\n
-    if(letter(C)||C=='_'){
+    if(C=='\0'){//读到源文件末尾
+        state = State::Done;
+    }
+    else if(letter(C)||C=='_'){
         state = State::InId; //标识符以字母或下划线开头
         cat(C,token);
     }
@@ -31,7 +88,7 @@ void HandleStart(State&state,char*&forward,std::string&token,char &C,
             cat(C,token);
         }
     }
-    else if(C=='#'){
+    else if(C=='#' && isDirectiveStart(src,index)){
         state = State::InPreproc;
         cat(C,token);
     }
@@ -40,12 +97,14 @@ void HandleStart(State&state,char*&forward,std::string&token,char &C,
         cat(C,token);
     }
     else{
-        state = State::Error;
+        setError(state,token,errorMessage,"非法字符");
     }
 }
 
+// 处理标识符或关键字
 void HandleInId(State&state,char*&forward,std::string&token,char &C,
-    size_t &index,const std::vector<Pos>positions,std::string &src,const KeywordTable&keytable,TranslateTable &transtable){ 
+    size_t &index,const std::vector<Pos>& positions,std::string &src,
+    const KeywordTable& keytable,TranslateTable &transtable,std::string& errorMessage){
     get_char(C,forward);
     if(letter(C)||digit(C)||C=='_'){
         cat(C,token);
@@ -62,8 +121,10 @@ void HandleInId(State&state,char*&forward,std::string&token,char &C,
     }
 }
 
+// 处理数字
 void HandleInNum(State&state,char*&forward,std::string&token,char &C,
-    size_t &index,const std::vector<Pos>positions,std::string &src,TranslateTable &transtable){
+    size_t &index,const std::vector<Pos>& positions,std::string &src,
+    TranslateTable &transtable,std::string& errorMessage){
     get_char(C,forward);
     if(digit(C)){
         cat(C,token);
@@ -82,8 +143,10 @@ void HandleInNum(State&state,char*&forward,std::string&token,char &C,
     }
 }
 
+// 处理浮点数
 void HandleInFloat(State&state,char*&forward,std::string&token,char &C,
-    size_t &index,const std::vector<Pos>positions,std::string &src,TranslateTable &transtable){ 
+    size_t &index,const std::vector<Pos>& positions,std::string &src,
+    TranslateTable &transtable,std::string& errorMessage){
      get_char(C,forward);
     if(digit(C)){
         cat(C,token);
@@ -98,82 +161,89 @@ void HandleInFloat(State&state,char*&forward,std::string&token,char &C,
     } 
 }
 
+// 处理指数
 void HandleInExp(State&state,char*&forward,std::string&token,char &C,
-    size_t &index,const std::vector<Pos>positions,std::string &src,TranslateTable &transtable){
+    size_t &index,const std::vector<Pos>& positions,std::string &src,
+    TranslateTable &transtable,std::string& errorMessage){
     get_char(C,forward);
     if(digit(C)){
         cat(C,token);
     }
-    else if(C=='+'||C=='-'){
+    else if((C=='+'||C=='-') && !token.empty() &&
+        (token.back()=='e'||token.back()=='E')){
         cat(C,token);
     }
+    else if(!token.empty() && (token.back()=='e'||token.back()=='E'||
+        token.back()=='+'||token.back()=='-')){
+        setError(state,token,errorMessage,"指数部分必须包含数字");
+    }
     else{
-        finish(TokenType::IntLiteral,positions,token,transtable,index,state);
+        finish(TokenType::FloatLiteral,positions,token,transtable,index,state);
         retract(forward);
     }    
 }
 
+// 处理字符
 void HandleInChar(State&state,char*&forward,std::string&token,char &C,size_t &index,
-    const std::vector<Pos>positions,std::string &src,TranslateTable &transtable){
-    bool iscatch=false;
+    const std::vector<Pos>& positions,std::string &src,
+    TranslateTable &transtable,std::string& errorMessage){
     get_char(C,forward);
-    if(C=='\n'||C=='\r'||C==EOF){
-        token.clear();
-        state = State::Error;
+    if(C=='\n'||C=='\r'||C=='\0'){//行尾或文件尾,字符常量未闭合
+        setError(state,token,errorMessage,"字符常量未闭合");
     }
-    else if(C=='\\'){
+    else if(C=='\\'){//转义字符
+        const char escaped = *forward;
+        if(!validSimpleEscape(escaped)){
+            setError(state,token,errorMessage,"字符常量中的转义序列非法");
+            return;
+        }
         cat(C,token);
-        char chf=peek(src,index,1);
-        char chs=peek(src,index,2);
-        if((chf=='\\'||chf=='\''||chf=='\"'||chf=='a'||chf=='b'||chf=='f'||
-            chf=='n'||chf=='r'||chf=='t'||chf=='v'||chf=='?')&&(chs=='\'')){
-            cat(chf,token);
-            cat(chs,token);
-            get_char(C,forward);
-            get_char(C,forward);
-            finish(TokenType::CharLiteral,positions,token,transtable,index,state);
-        } 
-        else{
-            token.clear();
-            state = State::Error;
-        }
-    }
-    else if(C=='\''){
-        if(iscatch){
-            finish(TokenType::CharLiteral,positions,token,transtable,index,state);
-        }
-        else{
-            token.clear();
-            state = State::Error;
-        }
-    }
-    else {
-        iscatch=true;
+        get_char(C,forward);
         cat(C,token);
+        get_char(C,forward);
+        if(C!='\''){
+            setError(state,token,errorMessage,"字符常量必须只包含一个字符");
+            return;
+        }
+        cat(C,token);
+        finish(TokenType::CharLiteral,positions,token,transtable,index,state);
+    }
+    else if(C=='\''){//收尾单引号
+        if(token.size()==2){
+            cat(C,token);
+            finish(TokenType::CharLiteral,positions,token,transtable,index,state);
+        }
+        else{//空字符常量
+            setError(state,token,errorMessage,"字符常量必须只包含一个字符");
+        }
+    }
+    else{//普通字符
+        if(token.size()!=1){
+            setError(state,token,errorMessage,"字符常量必须只包含一个字符");
+        }
+        else{
+            cat(C,token);
+        }
     }
 }
 
+// 处理字符串
 void HandleInStr(State&state,char*&forward,std::string&token,char &C,
-    size_t &index,const std::vector<Pos>positions,std::string &src,TranslateTable &transtable){ 
+    size_t &index,const std::vector<Pos>& positions,std::string &src,
+    TranslateTable &transtable,std::string& errorMessage){
     get_char(C,forward);
-    if(C=='\n'||C=='\r'||C==EOF){
-        token.clear();
-        state = State::Error;
+    if(C=='\n'||C=='\r'||C=='\0'){//字符串未闭合
+        setError(state,token,errorMessage,"字符串常量未闭合");
     }
-    else if(C=='\\'){
+    else if(C=='\\'){//转义字符
         cat(C,token);
-        char chf=peek(src,index,1);
-        char chs=peek(src,index,2);
-        if((chf=='\\'||chf=='\''||chf=='\"'||chf=='a'||chf=='b'||chf=='f'||
-            chf=='n'||chf=='r'||chf=='t'||chf=='v'||chf=='?')&&(chs=='\'')){
-            cat(chf,token);
-            cat(chs,token);
+        const char escaped = *forward;
+        if(validSimpleEscape(escaped)){
             get_char(C,forward);
-            get_char(C,forward);
-        } 
-        else{
-            token.clear();
-            state = State::Error;
+            cat(C,token);
+        }
+        else{//非法转义
+            setError(state,token,errorMessage,"字符串常量中的转义序列非法");
         }
     }
     else if(C=='"'){
@@ -185,45 +255,181 @@ void HandleInStr(State&state,char*&forward,std::string&token,char &C,
     }
 }
 
+// 处理注释
 void HandleInComment(State&state,char*&forward,std::string&token,char &C,
-    size_t &index,const std::vector<Pos>positions,std::string &src,TranslateTable &transtable){ 
-    get_char(C,forward);
-    cat(C,token);
-    if(C=='/'){
-        while(C!='\n'){
-            get_char(C,forward);
-            cat(C,token);
+    size_t &index,const std::vector<Pos>& positions,std::string &src,
+    TranslateTable &transtable,std::string& errorMessage){
+    if(*forward=='/'){//行注释:从'//'到行尾
+        while(*forward!='\0'&&*forward!='\n'){
+            forward++;
         }
-        state=State::Start;
-        index=index+token.size();
-        token.clear();
-    }
-    else if(C=='*'){
-        while(C!=EOF){
-            while(C!='*'){
-                get_char(C,forward);
-                cat(C,token);
-            }
-            get_char(C,forward);
-            cat(C,token);
-            if(C=='/'){
-                state=State::Start;
-                index=index+token.size();
-                token.clear();
-            }
+        if(*forward=='\n'){//跳过行尾换行符
+            forward++;
         }
     }
+    else if(*forward=='*'){//块注释:从'/*'到'*/'
+        forward++;//跳过'*'
+        while(*forward!='\0'&&!(*forward=='*'&&*(forward+1)=='/')){
+            forward++;
+        }
+        if(*forward=='\0'){//注释未闭合
+            setError(state,token,errorMessage,"块注释未闭合");
+            return;
+        }
+        forward+=2;//跳过'*/'
+    }
+    else{//既不是'/'也不是'*'
+        setError(state,token,errorMessage,"注释起始符非法");
+        return;
+    }
+    index=forward-src.data();
+    token.clear();
+    state=State::Start;
 }
 
+// 处理预处理
 void HandleInPreproc(State&state,char*&forward,std::string&token,char &C,
-    size_t &index,const std::vector<Pos>positions,std::string &src,TranslateTable &transtable){ 
-    
+    size_t &index,const std::vector<Pos>& positions,std::string &src,
+    TranslateTable &transtable,std::string& errorMessage){
+    //预处理指令表,token中已含'#'
+    static const std::unordered_map<std::string,TokenType> directives={
+        {"#include",TokenType::PpInclude},
+        {"#define", TokenType::PpDefine},
+        {"#undef",  TokenType::PpUndef},
+        {"#if",     TokenType::PpIf},
+        {"#ifdef",  TokenType::PpIfdef},
+        {"#ifndef", TokenType::PpIfndef},
+        {"#else",   TokenType::PpElse},
+        {"#elif",   TokenType::PpElif},
+        {"#endif",  TokenType::PpEndif},
+        {"#pragma", TokenType::PpPragma},
+        {"#error",  TokenType::PpError},
+        {"#warning",TokenType::PpWarning},
+        {"#line",   TokenType::PpLine}
+    };
+    if(token=="#"){
+        while(*forward==' '||*forward=='\t'||*forward=='\f'||*forward=='\v'){
+            ++forward;
+        }
+    }
+    get_char(C,forward);
+    if(letter(C)||digit(C)||C=='_'){//指令名由字母、数字、下划线组成
+        cat(C,token);
+    }
+    else{//指令名结束,查表确定类型
+        auto it=directives.find(token);
+        if(it!=directives.end()){
+            const size_t delimiterIndex = static_cast<size_t>(forward-src.data())-1;
+            transtable.add(it->second,token,positions[index].line,positions[index].column);
+            index = delimiterIndex;
+            token.clear();
+            state = State::Start;
+        }
+        else{//未知指令
+            setError(state,token,errorMessage,"未知的预处理指令");
+        }
+        retract(forward);
+    }
 }
 
+// 处理运算符
 void HandleInOp(State&state,char*&forward,std::string&token,char &C,
-    size_t &index,const std::vector<Pos>positions,std::string &src,TranslateTable &transtable){ 
+    size_t &index,const std::vector<Pos>& positions,std::string &src,
+    TranslateTable &transtable,std::string& errorMessage){
+    //'+'、'+='、'++'
+    if(C=='+'){
+        get_char(C,forward);
+        if(C=='+'){
+            cat(C,token);
+            finish(TokenType::PlusPlus,positions,token,transtable,index,state);
+        }
+        else if(C=='='){
+            cat(C,token);
+            finish(TokenType::PlusAssign,positions,token,transtable,index,state);
+        }
+        else{
+            finish(TokenType::Plus,positions,token,transtable,index,state);
+            retract(forward);
+        }
+    }
+    //'-'、'-='、'--'、'->'
+    else if(C=='-'){
+        get_char(C,forward);
+        if(C=='-'){
+            cat(C,token);
+            finish(TokenType::MinusMinus,positions,token,transtable,index,state);
+        }
+        else if(C=='='){
+            cat(C,token);
+            finish(TokenType::MinusAssign,positions,token,transtable,index,state);
+        }
+        else if(C=='>'){
+            cat(C,token);
+            get_char(C,forward);
+            if(C=='*'){
+                cat(C,token);
+                finish(TokenType::ArrowStar,positions,token,transtable,index,state);
+            }
+            else{
+                finish(TokenType::Arrow,positions,token,transtable,index,state);
+                retract(forward);
+            }
+        }
+        else{
+            finish(TokenType::Minus,positions,token,transtable,index,state);
+            retract(forward);
+        }
+    }
+    //'*'、'*='
+    else if(C=='*'){
+        get_char(C,forward);
+        if(C=='='){
+            cat(C,token);
+            finish(TokenType::StarAssign,positions,token,transtable,index,state);
+        }
+        else{
+            finish(TokenType::Star,positions,token,transtable,index,state);
+            retract(forward);
+        }
+    }
+    //'/'、'/='
+    else if(C=='/'){
+        get_char(C,forward);
+        if(C=='='){
+            cat(C,token);
+            finish(TokenType::SlashAssign,positions,token,transtable,index,state);
+        }
+        else{
+            finish(TokenType::Slash,positions,token,transtable,index,state);
+            retract(forward);
+        }
+    }
+    //'%'、'%='
+    else if(C=='%'){
+        get_char(C,forward);
+        if(C=='='){
+            cat(C,token);
+            finish(TokenType::PercentAssign,positions,token,transtable,index,state);
+        }
+        else{
+            finish(TokenType::Percent,positions,token,transtable,index,state);
+            retract(forward);
+        }
+    }
+    //'=='、'='
+    else if(C=='='){
+        get_char(C,forward);
+        if(C=='='){
+            cat(C,token);
+            finish(TokenType::Eq,positions,token,transtable,index,state);
+        }
+        else{
+            finish(TokenType::Assign,positions,token,transtable,index,state);
+            retract(forward);
+        }
+    }
     //'<','<=','<<','<<='
-    if(C=='<'){
+    else if(C=='<'){
         get_char(C,forward);
         if(C=='='){
             cat(C,token);
@@ -253,7 +459,7 @@ void HandleInOp(State&state,char*&forward,std::string&token,char &C,
             cat(C,token);
             finish(TokenType::Ge,positions,token,transtable,index,state);
         }
-        else if(C=='<'){
+        else if(C=='>'){
             cat(C,token);
             get_char(C,forward);
             if(C=='='){
@@ -267,18 +473,6 @@ void HandleInOp(State&state,char*&forward,std::string&token,char &C,
         }
         else{
             finish(TokenType::Gt,positions,token,transtable,index,state);
-            retract(forward);
-        }
-    }
-    //'=='、'='
-    else if(C=='='){
-        get_char(C,forward);
-        if(C=='='){
-            cat(C,token);
-            finish(TokenType::Eq,positions,token,transtable,index,state);
-        }
-        else{
-            finish(TokenType::Assign,positions,token,transtable,index,state);
             retract(forward);
         }
     }
@@ -310,6 +504,7 @@ void HandleInOp(State&state,char*&forward,std::string&token,char &C,
             retract(forward);
         }
     }
+    //'|'、'|='、'||'
     else if(C=='|'){
         get_char(C,forward);
         if(C=='|'){
@@ -325,21 +520,70 @@ void HandleInOp(State&state,char*&forward,std::string&token,char &C,
             retract(forward);
         }
     }
+    //'^'、'^='
     else if(C=='^'){
         get_char(C,forward);
         if(C=='='){
             cat(C,token);
-            finish(TokenType::XorAssign,positions,token,transtable,index,state);  
+            finish(TokenType::XorAssign,positions,token,transtable,index,state);
         }
         else{
             finish(TokenType::BitXor,positions,token,transtable,index,state);
             retract(forward);
         }
     }
-    else if(C=='~'){ 
+    //'~'
+    else if(C=='~'){
         finish(TokenType::BitNot,positions,token,transtable,index,state);
     }
-    else if(C=='?'){ 
-        
+    //'?'
+    else if(C=='?'){
+        finish(TokenType::Question,positions,token,transtable,index,state);
+    }
+    else if(C=='.'){
+        get_char(C,forward);
+        if(C=='*'){
+            cat(C,token);
+            finish(TokenType::DotStar,positions,token,transtable,index,state);
+        }
+        else {
+            finish(TokenType::Dot,positions,token,transtable,index,state);
+            retract(forward);
+        }
+    }
+    else if(C==':'){
+        get_char(C,forward);
+        if(C==':'){
+            cat(C,token);
+            finish(TokenType::Scope,positions,token,transtable,index,state);
+        }
+        else {
+            finish(TokenType::Colon,positions,token,transtable,index,state);
+            retract(forward);
+        }
+    }
+    else if(C=='('){
+        finish(TokenType::LParen,positions,token,transtable,index,state);
+    }
+    else if(C==')'){
+        finish(TokenType::RParen,positions,token,transtable,index,state);
+    }
+    else if(C=='{'){
+        finish(TokenType::LBrace,positions,token,transtable,index,state);
+    }
+    else if(C=='}'){
+        finish(TokenType::RBrace,positions,token,transtable,index,state);
+    }
+    else if(C=='['){
+        finish(TokenType::LBracket,positions,token,transtable,index,state);
+    }
+    else if(C==']'){
+        finish(TokenType::RBracket,positions,token,transtable,index,state);
+    }
+    else if(C==';'){
+        finish(TokenType::Semicolon,positions,token,transtable,index,state);
+    }
+    else if(C==','){
+        finish(TokenType::Comma,positions,token,transtable,index,state);
     }
 }

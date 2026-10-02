@@ -4,7 +4,8 @@ void get_char(char&C,char*&forward){
     forward++;
 }
 void get_nbc(char&C,char*&forward,size_t &index){
-    while(C==' '||C=='\t'||C=='\n'||C=='\r'){
+    while(*forward==' '||*forward=='\t'||*forward=='\n'||*forward=='\r'||
+        *forward=='\f'||*forward=='\v'){
         forward++;
         index++;
     }
@@ -25,8 +26,8 @@ bool digit(const char C){
 bool op(const char C){
     return C=='+'||C=='-'||C=='*'||C=='/'||C=='%'||C=='='||C=='<'||
     C=='>'||C=='!'||C=='&'||C=='|'||C=='^'||C=='~'||C=='?'||C==':'||
-    C=='.'||C=='#'||C=='@'||C=='$'||C=='%'||C=='^'||C==','||C==';'||
-    C=='('||C==')'||C=='['||C==']'||C=='{'||C=='}';
+    C=='.'||C==','||C==';'||C=='('||C==')'||C=='['||C==']'||
+    C=='{'||C=='}';
 }
 void retract(char*&forword){
     forword--;
@@ -38,9 +39,18 @@ float SToF(const std::string &token){
     return std::stof(token);
 }
 
-char peek(const std::string &src, size_t index, int offset = 0){
+char peek(const std::string &src, size_t index, int offset ){
     size_t i = index + offset;
     if (i >= src.size()) return '\0';
     return src[i];
 }
 
+void finish(TokenType type,const std::vector<Pos>& positions,std::string &token,
+    TranslateTable &transtable,size_t &index,State&state){
+    int line = positions[index].line;
+    int column = positions[index].column;
+    transtable.add(type,token,line,column);
+    index=index+token.size();
+    token.clear();
+    state = State::Start;
+}

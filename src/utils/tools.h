@@ -17,13 +17,6 @@ void retract(char*&forward);
 int SToI(const std::string &token);
 float SToF(const std::string &token);
 char peek(const std::string &src,size_t index,int offset=0);
-void finish(TokenType type,const std::vector<Pos>positions,std::string &token,
-    TranslateTable &transtable,size_t &index,State&state){
-    int line = positions[index].line;
-    int column = positions[index].column;
-    transtable.add(TokenType::ShrAssign,token,line,column);
-    index=index+token.size();
-    token.clear();
-    state = State::Start;
-}
+void finish(TokenType type,const std::vector<Pos>& positions,std::string &token,
+    TranslateTable &transtable,size_t &index,State&state);
 

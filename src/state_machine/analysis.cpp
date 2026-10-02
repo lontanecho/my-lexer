@@ -1,5 +1,6 @@
 #include"state_machine/analysis.h"
 #include"utils/tools.h"
+#include<string_view>
 #include<unordered_map>
 
 namespace {
@@ -13,7 +14,11 @@ void setError(State& state, std::string& token, std::string& errorMessage,
 
 bool validSimpleEscape(const char C) {
     return C=='\\'||C=='\''||C=='"'||C=='a'||C=='b'||C=='f'||
-        C=='n'||C=='r'||C=='t'||C=='v'||C=='?';
+        C=='n'||C=='r'||C=='t'||C=='v'||C=='?'||C=='0';
+}
+
+bool isExponentMarker(const char C) {
+    return C == 'e' || C == 'E';
 }
 
 bool isDirectiveStart(const std::string& src, const size_t index) {
@@ -53,6 +58,55 @@ bool isDirectiveStart(const std::string& src, const size_t index) {
     return false;
 }
 
+struct OperatorSpec {
+    std::string_view lexeme;
+    TokenType type;
+};
+
+void finishOperator(State& state, char*& forward, std::string& token,
+    size_t& index, const std::vector<Pos>& positions, std::string& src,
+    TranslateTable& transtable, std::string& errorMessage) {
+    // 按长度降序排列，保证多字符运算符优先匹配。
+    static constexpr OperatorSpec operators[] = {
+        {"->*", TokenType::ArrowStar},
+        {"<<=", TokenType::ShlAssign}, {">>=", TokenType::ShrAssign},
+        {"++", TokenType::PlusPlus}, {"--", TokenType::MinusMinus},
+        {"+=", TokenType::PlusAssign}, {"-=", TokenType::MinusAssign},
+        {"*=", TokenType::StarAssign}, {"/=", TokenType::SlashAssign},
+        {"%=", TokenType::PercentAssign}, {"==", TokenType::Eq},
+        {"<=", TokenType::Le}, {">=", TokenType::Ge},
+        {"&&", TokenType::And}, {"||", TokenType::Or},
+        {"&=", TokenType::AndAssign}, {"|=", TokenType::OrAssign},
+        {"^=", TokenType::XorAssign}, {"->", TokenType::Arrow},
+        {"<<", TokenType::Shl}, {">>", TokenType::Shr},
+        {"!=", TokenType::Ne}, {".*", TokenType::DotStar},
+        {"::", TokenType::Scope},
+        {"+", TokenType::Plus}, {"-", TokenType::Minus},
+        {"*", TokenType::Star}, {"/", TokenType::Slash},
+        {"%", TokenType::Percent}, {"=", TokenType::Assign},
+        {"<", TokenType::Lt}, {">", TokenType::Gt},
+        {"!", TokenType::Not}, {"&", TokenType::BitAnd},
+        {"|", TokenType::BitOr}, {"^", TokenType::BitXor},
+        {"~", TokenType::BitNot}, {"?", TokenType::Question},
+        {".", TokenType::Dot}, {":", TokenType::Colon},
+        {"(", TokenType::LParen}, {")", TokenType::RParen},
+        {"{", TokenType::LBrace}, {"}", TokenType::RBrace},
+        {"[", TokenType::LBracket}, {"]", TokenType::RBracket},
+        {";", TokenType::Semicolon}, {",", TokenType::Comma}
+    };
+
+    for (const OperatorSpec& spec : operators) {
+        if (src.compare(index, spec.lexeme.size(), spec.lexeme) == 0) {
+            token.assign(spec.lexeme);
+            forward = src.data() + index + spec.lexeme.size();
+            finish(spec.type, positions, token, transtable, index, state);
+            return;
+        }
+    }
+
+    setError(state, token, errorMessage, "无法识别的运算符");
+}
+
 }
 
 // 处理开始
@@ -68,6 +122,10 @@ void HandleStart(State&state,char*&forward,std::string&token,char &C,
     }
     else if(digit(C)){
         state = State::InNum; //数字以数字开头
+        cat(C,token);
+    }
+    else if(C=='.' && digit(peek(src,index,1))){
+        state = State::InFloat; //支持 .5 形式的浮点数
         cat(C,token);
     }
     else if(C=='\'') {
@@ -133,7 +191,7 @@ void HandleInNum(State&state,char*&forward,std::string&token,char &C,
         state = State::InFloat;
         cat(C,token);
     }
-    else if(C=='e'||C=='E'){
+    else if(isExponentMarker(C)){
         state = State::InExp;
         cat(C,token);
     }
@@ -151,7 +209,7 @@ void HandleInFloat(State&state,char*&forward,std::string&token,char &C,
     if(digit(C)){
         cat(C,token);
     }
-    else if(C=='e'||C=='E'){
+    else if(isExponentMarker(C)){
         state = State::InExp;
         cat(C,token);
     }
@@ -170,10 +228,10 @@ void HandleInExp(State&state,char*&forward,std::string&token,char &C,
         cat(C,token);
     }
     else if((C=='+'||C=='-') && !token.empty() &&
-        (token.back()=='e'||token.back()=='E')){
+        isExponentMarker(token.back())){
         cat(C,token);
     }
-    else if(!token.empty() && (token.back()=='e'||token.back()=='E'||
+    else if(!token.empty() && (isExponentMarker(token.back())||
         token.back()=='+'||token.back()=='-')){
         setError(state,token,errorMessage,"指数部分必须包含数字");
     }
@@ -260,23 +318,31 @@ void HandleInComment(State&state,char*&forward,std::string&token,char &C,
     size_t &index,const std::vector<Pos>& positions,std::string &src,
     TranslateTable &transtable,std::string& errorMessage){
     if(*forward=='/'){//行注释:从'//'到行尾
-        while(*forward!='\0'&&*forward!='\n'){
+        while(*forward!='\0'&&*forward!='\n'&&*forward!='\r'){
             forward++;
         }
-        if(*forward=='\n'){//跳过行尾换行符
+        if(*forward=='\r'){
+            forward++;
+            if(*forward=='\n'){
+                forward++;
+            }
+        }
+        else if(*forward=='\n'){//跳过行尾换行符
             forward++;
         }
     }
     else if(*forward=='*'){//块注释:从'/*'到'*/'
-        forward++;//跳过'*'
-        while(*forward!='\0'&&!(*forward=='*'&&*(forward+1)=='/')){
-            forward++;
+        size_t commentIndex = static_cast<size_t>(forward - src.data()) + 1;
+        while(commentIndex < src.size() &&
+            !(src[commentIndex]=='*' && commentIndex + 1 < src.size() &&
+                src[commentIndex + 1]=='/')){
+            ++commentIndex;
         }
-        if(*forward=='\0'){//注释未闭合
+        if(commentIndex >= src.size()){//注释未闭合
             setError(state,token,errorMessage,"块注释未闭合");
             return;
         }
-        forward+=2;//跳过'*/'
+        forward = src.data() + commentIndex + 2;//跳过'*/'
     }
     else{//既不是'/'也不是'*'
         setError(state,token,errorMessage,"注释起始符非法");
@@ -336,254 +402,6 @@ void HandleInPreproc(State&state,char*&forward,std::string&token,char &C,
 void HandleInOp(State&state,char*&forward,std::string&token,char &C,
     size_t &index,const std::vector<Pos>& positions,std::string &src,
     TranslateTable &transtable,std::string& errorMessage){
-    //'+'、'+='、'++'
-    if(C=='+'){
-        get_char(C,forward);
-        if(C=='+'){
-            cat(C,token);
-            finish(TokenType::PlusPlus,positions,token,transtable,index,state);
-        }
-        else if(C=='='){
-            cat(C,token);
-            finish(TokenType::PlusAssign,positions,token,transtable,index,state);
-        }
-        else{
-            finish(TokenType::Plus,positions,token,transtable,index,state);
-            retract(forward);
-        }
-    }
-    //'-'、'-='、'--'、'->'
-    else if(C=='-'){
-        get_char(C,forward);
-        if(C=='-'){
-            cat(C,token);
-            finish(TokenType::MinusMinus,positions,token,transtable,index,state);
-        }
-        else if(C=='='){
-            cat(C,token);
-            finish(TokenType::MinusAssign,positions,token,transtable,index,state);
-        }
-        else if(C=='>'){
-            cat(C,token);
-            get_char(C,forward);
-            if(C=='*'){
-                cat(C,token);
-                finish(TokenType::ArrowStar,positions,token,transtable,index,state);
-            }
-            else{
-                finish(TokenType::Arrow,positions,token,transtable,index,state);
-                retract(forward);
-            }
-        }
-        else{
-            finish(TokenType::Minus,positions,token,transtable,index,state);
-            retract(forward);
-        }
-    }
-    //'*'、'*='
-    else if(C=='*'){
-        get_char(C,forward);
-        if(C=='='){
-            cat(C,token);
-            finish(TokenType::StarAssign,positions,token,transtable,index,state);
-        }
-        else{
-            finish(TokenType::Star,positions,token,transtable,index,state);
-            retract(forward);
-        }
-    }
-    //'/'、'/='
-    else if(C=='/'){
-        get_char(C,forward);
-        if(C=='='){
-            cat(C,token);
-            finish(TokenType::SlashAssign,positions,token,transtable,index,state);
-        }
-        else{
-            finish(TokenType::Slash,positions,token,transtable,index,state);
-            retract(forward);
-        }
-    }
-    //'%'、'%='
-    else if(C=='%'){
-        get_char(C,forward);
-        if(C=='='){
-            cat(C,token);
-            finish(TokenType::PercentAssign,positions,token,transtable,index,state);
-        }
-        else{
-            finish(TokenType::Percent,positions,token,transtable,index,state);
-            retract(forward);
-        }
-    }
-    //'=='、'='
-    else if(C=='='){
-        get_char(C,forward);
-        if(C=='='){
-            cat(C,token);
-            finish(TokenType::Eq,positions,token,transtable,index,state);
-        }
-        else{
-            finish(TokenType::Assign,positions,token,transtable,index,state);
-            retract(forward);
-        }
-    }
-    //'<','<=','<<','<<='
-    else if(C=='<'){
-        get_char(C,forward);
-        if(C=='='){
-            cat(C,token);
-            finish(TokenType::Le,positions,token,transtable,index,state);
-        }
-        else if(C=='<'){
-            cat(C,token);
-            get_char(C,forward);
-            if(C=='='){
-                cat(C,token);
-                finish(TokenType::ShlAssign,positions,token,transtable,index,state);
-            }
-            else{
-                finish(TokenType::Shl,positions,token,transtable,index,state);
-                retract(forward);
-            }
-        }
-        else{
-            finish(TokenType::Lt,positions,token,transtable,index,state);
-            retract(forward);
-        }
-    }
-    //'>','>=','>>','>>='
-    else if(C=='>'){
-            get_char(C,forward);
-        if(C=='='){
-            cat(C,token);
-            finish(TokenType::Ge,positions,token,transtable,index,state);
-        }
-        else if(C=='>'){
-            cat(C,token);
-            get_char(C,forward);
-            if(C=='='){
-                cat(C,token);
-                finish(TokenType::ShrAssign,positions,token,transtable,index,state);
-            }
-            else{
-                finish(TokenType::Shr,positions,token,transtable,index,state);
-                retract(forward);
-            }
-        }
-        else{
-            finish(TokenType::Gt,positions,token,transtable,index,state);
-            retract(forward);
-        }
-    }
-    //'!='、'!'
-    else if(C=='!'){
-        get_char(C,forward);
-        if(C=='='){
-            cat(C,token);
-            finish(TokenType::Ne,positions,token,transtable,index,state);
-        }
-        else{
-            finish(TokenType::Not,positions,token,transtable,index,state);
-            retract(forward);
-        }
-    }
-    //'&'、'&='、'&&'
-    else if(C=='&'){
-        get_char(C,forward);
-        if(C=='&'){
-            cat(C,token);
-            finish(TokenType::And,positions,token,transtable,index,state);
-        }
-        else if(C=='='){
-            cat(C,token);
-            finish(TokenType::AndAssign,positions,token,transtable,index,state);
-        }
-        else{
-            finish(TokenType::BitAnd,positions,token,transtable,index,state);
-            retract(forward);
-        }
-    }
-    //'|'、'|='、'||'
-    else if(C=='|'){
-        get_char(C,forward);
-        if(C=='|'){
-            cat(C,token);
-            finish(TokenType::Or,positions,token,transtable,index,state);
-        }
-        else if(C=='='){
-            cat(C,token);
-            finish(TokenType::OrAssign,positions,token,transtable,index,state);
-        }
-        else{
-            finish(TokenType::BitOr,positions,token,transtable,index,state);
-            retract(forward);
-        }
-    }
-    //'^'、'^='
-    else if(C=='^'){
-        get_char(C,forward);
-        if(C=='='){
-            cat(C,token);
-            finish(TokenType::XorAssign,positions,token,transtable,index,state);
-        }
-        else{
-            finish(TokenType::BitXor,positions,token,transtable,index,state);
-            retract(forward);
-        }
-    }
-    //'~'
-    else if(C=='~'){
-        finish(TokenType::BitNot,positions,token,transtable,index,state);
-    }
-    //'?'
-    else if(C=='?'){
-        finish(TokenType::Question,positions,token,transtable,index,state);
-    }
-    else if(C=='.'){
-        get_char(C,forward);
-        if(C=='*'){
-            cat(C,token);
-            finish(TokenType::DotStar,positions,token,transtable,index,state);
-        }
-        else {
-            finish(TokenType::Dot,positions,token,transtable,index,state);
-            retract(forward);
-        }
-    }
-    else if(C==':'){
-        get_char(C,forward);
-        if(C==':'){
-            cat(C,token);
-            finish(TokenType::Scope,positions,token,transtable,index,state);
-        }
-        else {
-            finish(TokenType::Colon,positions,token,transtable,index,state);
-            retract(forward);
-        }
-    }
-    else if(C=='('){
-        finish(TokenType::LParen,positions,token,transtable,index,state);
-    }
-    else if(C==')'){
-        finish(TokenType::RParen,positions,token,transtable,index,state);
-    }
-    else if(C=='{'){
-        finish(TokenType::LBrace,positions,token,transtable,index,state);
-    }
-    else if(C=='}'){
-        finish(TokenType::RBrace,positions,token,transtable,index,state);
-    }
-    else if(C=='['){
-        finish(TokenType::LBracket,positions,token,transtable,index,state);
-    }
-    else if(C==']'){
-        finish(TokenType::RBracket,positions,token,transtable,index,state);
-    }
-    else if(C==';'){
-        finish(TokenType::Semicolon,positions,token,transtable,index,state);
-    }
-    else if(C==','){
-        finish(TokenType::Comma,positions,token,transtable,index,state);
-    }
+    finishOperator(state, forward, token, index, positions, src,
+        transtable, errorMessage);
 }

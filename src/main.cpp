@@ -11,13 +11,6 @@
 #include"utils/position.h"
 #include"state_machine/analysis.h"
 
-char C;
-size_t sourceIndex=0;//源文件索引,跳过空格注释,匹配成功时更新
-char* forward;
-std::string token;
-std::stringstream buffer;
-
-
 int main(int argc, char*argv[]){
     //输入源程序文件
     if(argc<2){
@@ -29,13 +22,17 @@ int main(int argc, char*argv[]){
         std::cerr<<"无法打开文件:"<<argv[1]<<std::endl;
         return 1;
     }
+    std::stringstream buffer;
     buffer << file.rdbuf();
     std::string src = buffer.str();
 
     //初始化
+    char C = '\0';
+    size_t sourceIndex = 0;//源文件索引,跳过空格注释,匹配成功时更新
     State state=State::Start;
     KeywordTable keytable;
-    forward = src.data();
+    char* forward = src.data();
+    std::string token;
     std::vector<Pos> positions = buildPositions(src);
     TranslateTable transtable;
     std::string errorMessage;
@@ -105,5 +102,5 @@ int main(int argc, char*argv[]){
         transtable.add(TokenType::Eof,"",positions[sourceIndex].line,positions[sourceIndex].column);
     }
     transtable.print();
-    return 0;
+    return hadError ? 1 : 0;
 }

@@ -332,16 +332,17 @@ void HandleInComment(State&state,char*&forward,std::string&token,char &C,
         }
     }
     else if(*forward=='*'){//块注释:从'/*'到'*/'
-        forward++;//跳过'*'
-        while(*forward!='\0' &&
-            !(forward[0]=='*' && forward[1]=='/')){
-            forward++;
+        size_t commentIndex = static_cast<size_t>(forward - src.data()) + 1;
+        while(commentIndex < src.size() &&
+            !(src[commentIndex]=='*' && commentIndex + 1 < src.size() &&
+                src[commentIndex + 1]=='/')){
+            ++commentIndex;
         }
-        if(*forward=='\0'){//注释未闭合
+        if(commentIndex >= src.size()){//注释未闭合
             setError(state,token,errorMessage,"块注释未闭合");
             return;
         }
-        forward+=2;//跳过'*/'
+        forward = src.data() + commentIndex + 2;//跳过'*/'
     }
     else{//既不是'/'也不是'*'
         setError(state,token,errorMessage,"注释起始符非法");

@@ -1,50 +1,34 @@
 #pragma once
-#include<string>
-#include<vector>
-#include"data_structure/state.h"
-#include"data_structure/token.h"
-#include"data_structure/translate_table.h"
-#include"data_structure/keyword_table.h"
-#include"utils/tools.h"
-#include"utils/position.h"
+#include <string>
+#include <vector>
+#include "data_structure/translate_table.h"
 
+struct LexError {
+    int line;
+    int column;
+    std::string message;
+};
 
-void HandleStart(State&state,char*&forword,std::string&token,char &C,
-    size_t &index,std::string &src,std::string& errorMessage);
+struct LexerStats {
+    size_t lineCount = 0;
+    size_t codeLineCount = 0;
+    size_t characterCount = 0;
+    size_t commentCount = 0;
+    size_t tokenCount = 0;
+    size_t keywordCount = 0;
+    size_t identifierCount = 0;
+    size_t intCount = 0;
+    size_t floatCount = 0;
+    size_t charCount = 0;
+    size_t stringCount = 0;
+    size_t operatorCount = 0;
+    size_t delimiterCount = 0;
+    size_t preprocessorCount = 0;
+};
 
-void HandleInId(State&state,char*&forword,std::string&token,char &C,
-    size_t &index,const std::vector<Pos>& positions,std::string &src,
-    const KeywordTable& keytable,TranslateTable &transtable,std::string& errorMessage);
+struct LexResult {
+    LexerStats stats;
+    std::vector<LexError> errors;
+};
 
-void HandleInNum(State&state,char*&forword,std::string&token,char &C,
-    size_t &index,const std::vector<Pos>& positions,std::string &src,
-    TranslateTable &transtable,std::string& errorMessage);
-
-void HandleInFloat(State&state,char*&forword,std::string&token,char &C,
-    size_t &index,const std::vector<Pos>& positions,std::string &src,
-    TranslateTable &transtable,std::string& errorMessage);
-
-void HandleInExp(State&state,char*&forword,std::string&token,char &C,
-    size_t &index,const std::vector<Pos>& positions,std::string &src,
-    TranslateTable &transtable,std::string& errorMessage);
-
-void HandleInStr(State&state,char*&forword,std::string&token,char &C,
-    size_t &index,const std::vector<Pos>& positions,std::string &src,
-    TranslateTable &transtable,std::string& errorMessage);
-
-void HandleInChar(State&state,char*&forword,std::string&token,char &C,
-    size_t &index,const std::vector<Pos>& positions,std::string &src,
-    TranslateTable &transtable,std::string& errorMessage);
-
-void HandleInComment(State&state,char*&forword,std::string&token,char &C,
-    size_t &index,const std::vector<Pos>& positions,std::string &src,
-    TranslateTable &transtable,std::string& errorMessage);
-
-void HandleInPreproc(State&state,char*&forword,std::string&token,char &C,
-    size_t &index,const std::vector<Pos>& positions,std::string &src,
-    TranslateTable &transtable,std::string& errorMessage);
-
-void HandleInOp(State&state,char*&forword,std::string&token,char &C,
-    size_t &index,const std::vector<Pos>& positions,std::string &src,
-    TranslateTable &transtable,std::string& errorMessage);
-
+LexResult AnalyzeSource(const std::string& src, TranslateTable& transtable);

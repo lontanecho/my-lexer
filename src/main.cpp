@@ -1,106 +1,49 @@
-#include<iostream>
-#include<algorithm>
-#include<fstream>
-#include<string>
-#include<sstream>
-#include<vector>
-#include"data_structure/keyword_table.h"
-#include"data_structure/translate_table.h"
-#include"data_structure/state.h"
-#include"utils/tools.h"
-#include"utils/position.h"
-#include"state_machine/analysis.h"
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include "state_machine/analysis.h"
 
-int main(int argc, char*argv[]){
-    //输入源程序文件
-    if(argc<2){
-        std::cerr<<"用法:"<<argv[0]<<" <文件名>"<<std::endl;
+int main(int argc, char* argv[]) {
+    if (argc != 2) {
+        std::cerr << "用法: " << argv[0] << " <文件名>" << std::endl;
         return 1;
     }
-    std::ifstream file(argv[1]);
-    if(!file.is_open()){
-        std::cerr<<"无法打开文件:"<<argv[1]<<std::endl;
+    // 二进制读取，避免 Windows 自动转换 CRLF 或将 Ctrl-Z 当作文件结束。
+    std::ifstream file(argv[1], std::ios::binary);
+    if (!file.is_open()) {
+        std::cerr << "无法打开文件: " << argv[1] << std::endl;
         return 1;
     }
     std::stringstream buffer;
     buffer << file.rdbuf();
-    std::string src = buffer.str();
-
-    //初始化
-    char C = '\0';
-    size_t sourceIndex = 0;//源文件索引,跳过空格注释,匹配成功时更新
-    State state=State::Start;
-    KeywordTable keytable;
-    char* forward = src.data();
-    std::string token;
-    std::vector<Pos> positions = buildPositions(src);
-    TranslateTable transtable;
-    std::string errorMessage;
-    bool hadError = false;
-    
-    do{
-        switch(state){
-            //开始
-            case State::Start: 
-                HandleStart(state,forward,token,C,sourceIndex,src,errorMessage);
-                break;
-            //关键词或标识符
-            case State::InId:
-                HandleInId(state,forward,token,C,sourceIndex,positions,src,keytable,transtable,errorMessage);
-                break;
-            //数字
-            case State::InNum:
-                HandleInNum(state,forward,token,C,sourceIndex,positions,src,transtable,errorMessage);
-                break;
-            //浮点数
-            case State::InFloat: 
-                HandleInFloat(state,forward,token,C,sourceIndex,positions,src,transtable,errorMessage);
-                break;
-            //指数
-            case State::InExp:
-                HandleInExp(state,forward,token,C,sourceIndex,positions,src,transtable,errorMessage);
-                break;
-            //字符常量
-            case State::InChar:
-                HandleInChar(state,forward,token,C,sourceIndex,positions,src,transtable,errorMessage);
-                break;
-            //字符串常量
-            case State::InStr:
-                HandleInStr(state,forward,token,C,sourceIndex,positions,src,transtable,errorMessage);
-                break;
-            //注释
-            case State::InComment:
-                HandleInComment(state,forward,token,C,sourceIndex,positions,src,transtable,errorMessage);
-                break;
-            //预处理
-            case State::InPreproc:
-                HandleInPreproc(state,forward,token,C,sourceIndex,positions,src,transtable,errorMessage);
-                break;
-            //运算符
-            case State::InOp:
-                HandleInOp(state,forward,token,C,sourceIndex,positions,src,transtable,errorMessage);
-                break;
-            //词法错误
-            case State::Error:
-                hadError = true;
-                sourceIndex = std::min(sourceIndex, src.size());
-                std::cerr<<"词法错误: 第"<<positions[sourceIndex].line
-                    <<"行 第"<<positions[sourceIndex].column<<"列"
-                    <<"，"<<(errorMessage.empty()?"无法识别当前词素":errorMessage)
-                    <<std::endl;
-                state = State::Done;
-                break;
-            //结束
-            case State::Done:
-                break;
-            default:
-                state = State::Done;
-                break;
-        }
-    }while(state!=State::Done);
-    if(!hadError){
-        transtable.add(TokenType::Eof,"",positions[sourceIndex].line,positions[sourceIndex].column);
+    if (file.bad()) {
+        std::cerr << "读取文件失败: " << argv[1] << std::endl;
+        return 1;
     }
-    transtable.print();
-    return hadError ? 1 : 0;
+
+    TranslateTable table;
+    const LexResult result = AnalyzeSource(buffer.str(), table);
+    table.print();
+    for (const LexError& error : result.errors) {
+        std::cerr << "词法错误: 第" << error.line << "行 第" << error.column
+            << "列，" << error.message << std::endl;
+    }
+    const LexerStats& stats = result.stats;
+    std::cout << "\n统计结果:\n"
+        << "源程序行数: " << stats.lineCount << '\n'
+        << "代码行数: " << stats.codeLineCount << '\n'
+        << "字符总数（字节，含空白和注释）: " << stats.characterCount << '\n'
+        << "注释个数: " << stats.commentCount << '\n'
+        << "关键字: " << stats.keywordCount << '\n'
+        << "标识符: " << stats.identifierCount << '\n'
+        << "整数常量: " << stats.intCount << '\n'
+        << "浮点常量: " << stats.floatCount << '\n'
+        << "字符常量: " << stats.charCount << '\n'
+        << "字符串常量: " << stats.stringCount << '\n'
+        << "运算符: " << stats.operatorCount << '\n'
+        << "界符: " << stats.delimiterCount << '\n'
+        << "预处理指令: " << stats.preprocessorCount << '\n'
+        << "有效单词总数(不含 EOF): " << stats.tokenCount << '\n'
+        << "词法错误数: " << result.errors.size() << std::endl;
+    return result.errors.empty() ? 0 : 1;
 }
